@@ -1,9 +1,15 @@
-import { useState } from 'react'
-import { Layout, Tabs, Statistic, Row, Col, Card, Tag, Button, Input, Table, Drawer, Descriptions, Space, Progress, Select, DatePicker } from 'antd'
+import { useState, useEffect } from 'react'
+import { Layout, Tabs, Statistic, Row, Col, Card, Tag, Button, Input, Table, Drawer, Descriptions, Space, Progress, Select, DatePicker, Form, message } from 'antd'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { useTaskStore } from '../store/tasks'
 import type { Task, TaskStatus, TaskPriority } from '../types'
 import dayjs, { Dayjs } from 'dayjs'
+
+interface TaskFormValues {
+  name: string
+  priority: TaskPriority
+  expectedCompletionAt: Dayjs
+}
 
 const { Header, Content } = Layout
 
@@ -47,10 +53,30 @@ function getUrgency(task: Task): { label: string; color: string } {
 
 export default function Dashboard() {
   const store = useTaskStore()
-  const [newTaskName, setNewTaskName] = useState('')
-  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('medium')
-  const [newTaskDeadline, setNewTaskDeadline] = useState<Dayjs | null>(null)
+  const [form] = Form.useForm<TaskFormValues>()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    store.loadInitialTasks()
+  }, [])
+
+  const handleAddTask = async (values: TaskFormValues) => {
+    setSubmitting(true)
+    try {
+      const task = await store.addTask(values.name, values.priority, values.expectedCompletionAt.valueOf())
+      if (task) {
+        message.success('任务创建成功')
+        form.resetFields()
+      } else {
+        message.error('任务创建失败')
+      }
+    } catch (e) {
+      message.error('任务创建失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const taskColumns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 100 },
@@ -79,26 +105,45 @@ export default function Dashboard() {
     <Layout style={{ minHeight: '100vh' }}>
       <Header style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
         <h1 style={{ color: 'white', margin: 0, fontSize: 18 }}>🔧 分布式任务调度与监控平台</h1>
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <Input placeholder="任务名称" value={newTaskName} onChange={e => setNewTaskName(e.target.value)} style={{ width: 160 }} />
-          <Select<TaskPriority> value={newTaskPriority} onChange={setNewTaskPriority} style={{ width: 100 }} options={[
-            { value: 'low', label: '低优先级' },
-            { value: 'medium', label: '中优先级' },
-            { value: 'high', label: '高优先级' },
-            { value: 'urgent', label: '紧急' },
-          ]} />
-          <DatePicker showTime value={newTaskDeadline} onChange={setNewTaskDeadline} placeholder="预期完成时间" style={{ width: 220 }} />
-          <Button type="primary" onClick={() => {
-            if (newTaskName) {
-              store.addTask(newTaskName, newTaskPriority, newTaskDeadline?.valueOf())
-              setNewTaskName('')
-              setNewTaskPriority('medium')
-              setNewTaskDeadline(null)
-            }
-          }}>
-            添加任务
-          </Button>
-        </div>
+        <Form
+          form={form}
+          layout="inline"
+          onFinish={handleAddTask}
+          initialValues={{ priority: 'medium' as TaskPriority }}
+          style={{ marginLeft: 'auto' }}
+        >
+          <Form.Item<TaskFormValues>
+            name="name"
+            rules={[{ required: true, message: '请输入任务名称' }]}
+            style={{ marginBottom: 0 }}
+          >
+            <Input placeholder="任务名称" style={{ width: 160 }} />
+          </Form.Item>
+          <Form.Item<TaskFormValues>
+            name="priority"
+            rules={[{ required: true, message: '请选择优先级' }]}
+            style={{ marginBottom: 0 }}
+          >
+            <Select<TaskPriority> style={{ width: 120 }} options={[
+              { value: 'low', label: '低优先级' },
+              { value: 'medium', label: '中优先级' },
+              { value: 'high', label: '高优先级' },
+              { value: 'urgent', label: '紧急' },
+            ]} />
+          </Form.Item>
+          <Form.Item<TaskFormValues>
+            name="expectedCompletionAt"
+            rules={[{ required: true, message: '请选择预期完成时间' }]}
+            style={{ marginBottom: 0 }}
+          >
+            <DatePicker showTime placeholder="预期完成时间" style={{ width: 220 }} />
+          </Form.Item>
+          <Form.Item style={{ marginBottom: 0 }}>
+            <Button type="primary" htmlType="submit" loading={submitting}>
+              添加任务
+            </Button>
+          </Form.Item>
+        </Form>
       </Header>
       <Content style={{ padding: 16 }}>
         {/* Stats */}

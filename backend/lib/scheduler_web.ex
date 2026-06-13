@@ -28,14 +28,35 @@ end
 defmodule SchedulerWeb.TaskController do
   use Phoenix.Controller, formats: [:json]
 
-  def index(conn, _params) do
-    tasks = Scheduler.TaskManager.list_tasks()
-    json(conn, %{tasks: Enum.map(tasks, &Map.from_struct/1)})
+  defp serialize_task(task) do
+    map = Map.from_struct(task)
+    map
+    |> Map.put(:priority, to_string(map.priority))
+    |> Map.put(:status, to_string(map.status))
+    |> Map.put(:expected_completion_at, if(map.expected_completion_at, do: DateTime.to_unix(map.expected_completion_at, :millisecond), else: nil))
+    |> Map.put(:created_at, DateTime.to_unix(map.created_at, :millisecond))
+    |> Map.put(:startedAt, if(Map.get(map, :started_at), do: DateTime.to_unix(map.started_at, :millisecond), else: nil))
+    |> Map.put(:completedAt, if(Map.get(map, :completed_at), do: DateTime.to_unix(map.completed_at, :millisecond), else: nil))
+    |> Map.put(:createdAt, map.created_at |> DateTime.to_unix(:millisecond))
   end
 
-  def create(conn, %{"name" => name}) do
-    task = Scheduler.TaskManager.add_task(name)
-    json(conn, %{task: Map.from_struct(task)})
+  def index(conn, _params) do
+    tasks = Scheduler.TaskManager.list_tasks()
+    json(conn, %{tasks: Enum.map(tasks, &serialize_task/1)})
+  end
+
+  def create(conn, %{"name" => name, "priority" => priority, "expectedCompletionAt" => expected_completion_at})
+      when is_binary(name) and byte_size(name) > 0 and is_binary(priority) and priority in ~w(low medium high urgent) do
+    priority_atom = String.to_existing_atom(priority)
+    expected_at = if is_integer(expected_completion_at), do: DateTime.from_unix!(expected_completion_at, :millisecond), else: nil
+    task = Scheduler.TaskManager.add_task(name, priority_atom, expected_at)
+    json(conn, %{task: serialize_task(task)})
+  end
+
+  def create(conn, _params) do
+    conn
+    |> put_status(:bad_request)
+    |> json(%{error: "Missing or invalid required fields: name, priority (low/medium/high/urgent), expectedCompletionAt (timestamp in ms)"})
   end
 
   def retry(conn, %{"id" => id}) do

@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import type { Task, ClusterNode, MetricsSnapshot, TaskStatus, TaskPriority } from '../types'
 
-// Mock data generators
+const STORAGE_KEY = 'scheduler.tasks.v1'
+
 function mockNodes(): ClusterNode[] {
   return Array.from({ length: 5 }, (_, i) => ({
     id: `node-${i + 1}`,
@@ -41,6 +42,23 @@ function mockTasks(nodes: ClusterNode[]): Task[] {
   })
 }
 
+function loadTasksFromStorage(nodes: ClusterNode[]): Task[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed
+    }
+  } catch (_e) { /* ignore */ }
+  return mockTasks(nodes)
+}
+
+function saveTasksToStorage(tasks: Task[]) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
+  } catch (_e) { /* ignore */ }
+}
+
 const initialNodes = mockNodes()
 
 interface TaskStore {
@@ -48,16 +66,17 @@ interface TaskStore {
   nodes: ClusterNode[]
   metrics: MetricsSnapshot[]
   selectedTask: Task | null
-  addTask: (name: string, priority: TaskPriority, expectedCompletionAt?: number) => void
-  retryTask: (id: string) => void
-  cancelTask: (id: string) => void
+  addTask: (name: string, priority: TaskPriority, expectedCompletionAt: number) => Promise<Task | null>
+  retryTask: (id: string) => Promise<void>
+  cancelTask: (id: string) => Promise<void>
   selectTask: (t: Task | null) => void
   refreshNodes: () => void
   addMetric: () => void
+  loadInitialTasks: () => void
 }
 
 export const useTaskStore = create<TaskStore>((set, get) => ({
-  tasks: mockTasks(initialNodes),
+  tasks: loadTasksFromStorage(initialNodes),
   nodes: initialNodes,
   metrics: Array.from({ length: 20 }, (_, i) => ({
     time: Date.now() - (20 - i) * 5000,
@@ -68,7 +87,41 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     nodeCount: 5,
   })),
   selectedTask: null,
-  addTask: (name, priority, expectedCompletionAt) => {
+
+  loadInitialTasks: () => {
+    set({ tasks: loadTasksFromStorage(get().nodes) })
+  },
+
+  addTask: async (name, priority, expectedCompletionAt) => {
+    if (!name || !priority || !expectedCompletionAt) return null
+
+    try {
+      const resp = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, priority, expectedCompletionAt })
+      })
+      if (resp.ok) {
+        const data = await resp.json()
+        const task: Task = {
+          id: data.task.id,
+          name: data.task.name,
+          priority: data.task.priority as TaskPriority,
+          expectedCompletionAt: data.task.expected_completion_at ?? undefined,
+          status: data.task.status as TaskStatus,
+          node: data.task.node,
+          createdAt: data.task.createdAt ?? data.task.created_at ?? Date.now(),
+          retries: data.task.retries ?? 0,
+          maxRetries: data.task.max_retries ?? 3,
+          logs: data.task.logs ?? [`[INFO] Task ${name} queued`],
+        }
+        const newTasks = [task, ...get().tasks]
+        set({ tasks: newTasks })
+        saveTasksToStorage(newTasks)
+        return task
+      }
+    } catch (_e) { /* fallback to local */ }
+
     const task: Task = {
       id: `task-${Date.now()}`,
       name,
@@ -76,18 +129,43 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
       expectedCompletionAt,
       status: 'pending',
       node: get().nodes[Math.floor(Math.random() * get().nodes.length)].name,
-      createdAt: Date.now(), retries: 0, maxRetries: 3, logs: [`[INFO] Task ${name} queued`],
+      createdAt: Date.now(),
+      retries: 0,
+      maxRetries: 3,
+      logs: [`[INFO] Task ${name} queued`],
     }
-    set({ tasks: [task, ...get().tasks] })
+    const newTasks = [task, ...get().tasks]
+    set({ tasks: newTasks })
+    saveTasksToStorage(newTasks)
+    return task
   },
-  retryTask: (id) => set({
-    tasks: get().tasks.map(t => t.id === id ? { ...t, status: 'pending', retries: t.retries + 1, logs: [...t.logs, '[INFO] Retrying...'] } : t)
-  }),
-  cancelTask: (id) => set({
-    tasks: get().tasks.map(t => t.id === id ? { ...t, status: 'failed' as TaskStatus, logs: [...t.logs, '[WARN] Cancelled by user'] } : t)
-  }),
+
+  retryTask: async (id) => {
+    try {
+      await fetch(`/api/tasks/${id}/retry`, { method: 'POST' })
+    } catch (_e) { /* ignore */ }
+    const newTasks = get().tasks.map(t =>
+      t.id === id ? { ...t, status: 'pending' as TaskStatus, retries: t.retries + 1, logs: [...t.logs, '[INFO] Retrying...'] } : t
+    )
+    set({ tasks: newTasks })
+    saveTasksToStorage(newTasks)
+  },
+
+  cancelTask: async (id) => {
+    try {
+      await fetch(`/api/tasks/${id}/cancel`, { method: 'POST' })
+    } catch (_e) { /* ignore */ }
+    const newTasks = get().tasks.map(t =>
+      t.id === id ? { ...t, status: 'failed' as TaskStatus, logs: [...t.logs, '[WARN] Cancelled by user'] } : t
+    )
+    set({ tasks: newTasks })
+    saveTasksToStorage(newTasks)
+  },
+
   selectTask: (t) => set({ selectedTask: t }),
+
   refreshNodes: () => set({ nodes: mockNodes() }),
+
   addMetric: () => {
     const m: MetricsSnapshot = {
       time: Date.now(),
