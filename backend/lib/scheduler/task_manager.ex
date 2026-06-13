@@ -2,7 +2,7 @@ defmodule Scheduler.TaskManager do
   use GenServer
 
   defmodule Task do
-    defstruct [:id, :name, :status, :node, :created_at, :retries, :max_retries, :logs]
+    defstruct [:id, :name, :priority, :expected_completion_at, :status, :node, :created_at, :retries, :max_retries, :logs]
   end
 
   # Client API
@@ -12,8 +12,8 @@ defmodule Scheduler.TaskManager do
 
   def list_tasks, do: GenServer.call(__MODULE__, :list_tasks)
 
-  def add_task(name) do
-    GenServer.call(__MODULE__, {:add_task, name})
+  def add_task(name, priority \\ :medium, expected_completion_at \\ nil) do
+    GenServer.call(__MODULE__, {:add_task, name, priority, expected_completion_at})
   end
 
   def retry_task(id), do: GenServer.call(__MODULE__, {:retry_task, id})
@@ -25,13 +25,16 @@ defmodule Scheduler.TaskManager do
   # Server callbacks
   @impl true
   def init(_) do
-    # Seed some mock tasks
     tasks = for i <- 1..8 do
       name = Enum.at(~w[data_sync email_batch report_gen cache_warm log_rotate db_backup index_rebuild health_check], rem(i - 1, 8))
       status = Enum.at(~w[pending running success failed]a, :rand.uniform(4) - 1)
+      priority = Enum.at(~w[low medium high urgent]a, :rand.uniform(4) - 1)
+      expected_completion_at = DateTime.add(DateTime.utc_now(), :rand.uniform(86400), :second)
       %Task{
         id: "task-#{1000 + i}",
         name: name,
+        priority: priority,
+        expected_completion_at: expected_completion_at,
         status: status,
         node: "worker-#{:rand.uniform(4)}",
         created_at: DateTime.utc_now(),
@@ -49,11 +52,13 @@ defmodule Scheduler.TaskManager do
   end
 
   @impl true
-  def handle_call({:add_task, name}, _from, state) do
+  def handle_call({:add_task, name, priority, expected_completion_at}, _from, state) do
     counter = state.counter + 1
     task = %Task{
       id: "task-#{counter}",
       name: name,
+      priority: priority,
+      expected_completion_at: expected_completion_at,
       status: :pending,
       node: "worker-#{:rand.uniform(4)}",
       created_at: DateTime.utc_now(),

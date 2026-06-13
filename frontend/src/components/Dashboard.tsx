@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import { Layout, Tabs, Statistic, Row, Col, Card, Tag, Button, Input, Table, Drawer, Descriptions, Space, Progress } from 'antd'
+import { Layout, Tabs, Statistic, Row, Col, Card, Tag, Button, Input, Table, Drawer, Descriptions, Space, Progress, Select, DatePicker } from 'antd'
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts'
 import { useTaskStore } from '../store/tasks'
-import type { Task, TaskStatus } from '../types'
+import type { Task, TaskStatus, TaskPriority } from '../types'
+import dayjs, { Dayjs } from 'dayjs'
 
 const { Header, Content } = Layout
 
@@ -10,14 +11,53 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
   pending: 'default', running: 'processing', success: 'success', failed: 'error', retry: 'warning'
 }
 
+const PRIORITY_COLORS: Record<TaskPriority, string> = {
+  low: 'default', medium: 'blue', high: 'orange', urgent: 'red'
+}
+
+const PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low: '低', medium: '中', high: '高', urgent: '紧急'
+}
+
+const URGENCY_COLORS = {
+  overdue: 'red',
+  critical: 'orange',
+  warning: 'gold',
+  normal: 'green'
+}
+
+function getUrgency(task: Task): { label: string; color: string } {
+  if (!task.expectedCompletionAt || task.status === 'success' || task.status === 'failed') {
+    return { label: '-', color: 'default' }
+  }
+  const now = Date.now()
+  const diff = task.expectedCompletionAt - now
+  if (diff < 0) {
+    return { label: '已逾期', color: URGENCY_COLORS.overdue }
+  }
+  const hours = diff / (1000 * 60 * 60)
+  if (hours < 1) {
+    return { label: '极紧急', color: URGENCY_COLORS.critical }
+  }
+  if (hours < 24) {
+    return { label: '紧急', color: URGENCY_COLORS.warning }
+  }
+  return { label: '正常', color: URGENCY_COLORS.normal }
+}
+
 export default function Dashboard() {
   const store = useTaskStore()
   const [newTaskName, setNewTaskName] = useState('')
+  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriority>('medium')
+  const [newTaskDeadline, setNewTaskDeadline] = useState<Dayjs | null>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
 
   const taskColumns = [
     { title: 'ID', dataIndex: 'id', key: 'id', width: 100 },
     { title: '名称', dataIndex: 'name', key: 'name' },
+    { title: '优先级', dataIndex: 'priority', key: 'priority', width: 90, render: (p: TaskPriority) => <Tag color={PRIORITY_COLORS[p]}>{PRIORITY_LABELS[p]}</Tag> },
+    { title: '紧急程度', key: 'urgency', width: 90, render: (_: any, r: Task) => { const u = getUrgency(r); return <Tag color={u.color}>{u.label}</Tag> } },
+    { title: '预期完成', key: 'expectedCompletionAt', width: 160, render: (_: any, r: Task) => r.expectedCompletionAt ? new Date(r.expectedCompletionAt).toLocaleString() : '-' },
     { title: '状态', dataIndex: 'status', key: 'status', render: (s: TaskStatus) => <Tag color={STATUS_COLORS[s]}>{s}</Tag> },
     { title: '节点', dataIndex: 'node', key: 'node' },
     { title: '重试', key: 'retries', render: (_: any, r: Task) => `${r.retries}/${r.maxRetries}` },
@@ -41,7 +81,21 @@ export default function Dashboard() {
         <h1 style={{ color: 'white', margin: 0, fontSize: 18 }}>🔧 分布式任务调度与监控平台</h1>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <Input placeholder="任务名称" value={newTaskName} onChange={e => setNewTaskName(e.target.value)} style={{ width: 160 }} />
-          <Button type="primary" onClick={() => { if (newTaskName) { store.addTask(newTaskName); setNewTaskName('') } }}>
+          <Select<TaskPriority> value={newTaskPriority} onChange={setNewTaskPriority} style={{ width: 100 }} options={[
+            { value: 'low', label: '低优先级' },
+            { value: 'medium', label: '中优先级' },
+            { value: 'high', label: '高优先级' },
+            { value: 'urgent', label: '紧急' },
+          ]} />
+          <DatePicker showTime value={newTaskDeadline} onChange={setNewTaskDeadline} placeholder="预期完成时间" style={{ width: 220 }} />
+          <Button type="primary" onClick={() => {
+            if (newTaskName) {
+              store.addTask(newTaskName, newTaskPriority, newTaskDeadline?.valueOf())
+              setNewTaskName('')
+              setNewTaskPriority('medium')
+              setNewTaskDeadline(null)
+            }
+          }}>
             添加任务
           </Button>
         </div>
@@ -124,6 +178,9 @@ export default function Dashboard() {
               <Descriptions column={1} bordered size="small">
                 <Descriptions.Item label="ID">{store.selectedTask.id}</Descriptions.Item>
                 <Descriptions.Item label="名称">{store.selectedTask.name}</Descriptions.Item>
+                <Descriptions.Item label="优先级"><Tag color={PRIORITY_COLORS[store.selectedTask.priority]}>{PRIORITY_LABELS[store.selectedTask.priority]}</Tag></Descriptions.Item>
+                <Descriptions.Item label="紧急程度">{(() => { const u = getUrgency(store.selectedTask!); return <Tag color={u.color}>{u.label}</Tag> })()}</Descriptions.Item>
+                <Descriptions.Item label="预期完成时间">{store.selectedTask.expectedCompletionAt ? new Date(store.selectedTask.expectedCompletionAt).toLocaleString() : '-'}</Descriptions.Item>
                 <Descriptions.Item label="状态"><Tag color={STATUS_COLORS[store.selectedTask.status]}>{store.selectedTask.status}</Tag></Descriptions.Item>
                 <Descriptions.Item label="执行节点">{store.selectedTask.node}</Descriptions.Item>
                 <Descriptions.Item label="重试次数">{store.selectedTask.retries}/{store.selectedTask.maxRetries}</Descriptions.Item>

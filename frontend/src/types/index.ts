@@ -1,9 +1,12 @@
 export type TaskStatus = 'pending' | 'running' | 'success' | 'failed' | 'retry'
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent'
 export type NodeType = 'scheduler' | 'worker'
 
 export interface Task {
   id: string
   name: string
+  priority: TaskPriority
+  expectedCompletionAt?: number
   status: TaskStatus
   node: string
   createdAt: number

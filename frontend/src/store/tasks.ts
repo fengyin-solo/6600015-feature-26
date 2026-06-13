@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Task, ClusterNode, MetricsSnapshot, TaskStatus } from '../types'
+import type { Task, ClusterNode, MetricsSnapshot, TaskStatus, TaskPriority } from '../types'
 
 // Mock data generators
 function mockNodes(): ClusterNode[] {
@@ -17,13 +17,17 @@ function mockNodes(): ClusterNode[] {
 
 function mockTasks(nodes: ClusterNode[]): Task[] {
   const names = ['data_sync', 'email_batch', 'report_gen', 'cache_warm', 'log_rotate', 'db_backup', 'index_rebuild', 'health_check']
+  const priorities: TaskPriority[] = ['low', 'medium', 'high', 'urgent']
   return Array.from({ length: 12 }, (_, i) => {
     const status: TaskStatus[] = ['pending', 'running', 'success', 'failed']
     const s = status[Math.floor(Math.random() * 4)]
     const node = nodes[Math.floor(Math.random() * nodes.length)]
+    const p = priorities[Math.floor(Math.random() * 4)]
     return {
       id: `task-${1000 + i}`,
       name: names[i % names.length],
+      priority: p,
+      expectedCompletionAt: Date.now() + Math.floor(Math.random() * 86400000),
       status: s,
       node: node.name,
       createdAt: Date.now() - Math.floor(Math.random() * 600000),
@@ -44,7 +48,7 @@ interface TaskStore {
   nodes: ClusterNode[]
   metrics: MetricsSnapshot[]
   selectedTask: Task | null
-  addTask: (name: string) => void
+  addTask: (name: string, priority: TaskPriority, expectedCompletionAt?: number) => void
   retryTask: (id: string) => void
   cancelTask: (id: string) => void
   selectTask: (t: Task | null) => void
@@ -64,10 +68,13 @@ export const useTaskStore = create<TaskStore>((set, get) => ({
     nodeCount: 5,
   })),
   selectedTask: null,
-  addTask: (name) => {
+  addTask: (name, priority, expectedCompletionAt) => {
     const task: Task = {
       id: `task-${Date.now()}`,
-      name, status: 'pending',
+      name,
+      priority,
+      expectedCompletionAt,
+      status: 'pending',
       node: get().nodes[Math.floor(Math.random() * get().nodes.length)].name,
       createdAt: Date.now(), retries: 0, maxRetries: 3, logs: [`[INFO] Task ${name} queued`],
     }
